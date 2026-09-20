@@ -7,9 +7,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ocrIntervalMs: DEFAULT_OCR_INTERVAL_MS,
   backend: 'webgpu',
   keywords: [
-    { id: 'k1', label: 'Boss 出现', pattern: '\\bboss\\b|BOSS', enabled: true },
-    { id: 'k2', label: '强化成功', pattern: '强化成功', enabled: false },
-    { id: 'k3', label: '稀有掉落', pattern: '稀有.*?(掉落|获得)', enabled: false },
+    { id: 'k1', label: '测谎', pattern: '测谎小游戏开始', enabled: true },
+    { id: 'k2', label: '断线', pattern: '与服务器连接发生错误', enabled: true },
+    { id: 'k3', label: 'Boss 出现', pattern: '\\bboss\\b|BOSS', enabled: false },
+    { id: 'k4', label: '强化成功', pattern: '强化成功', enabled: false },
   ],
   crop: { enabled: false, left: 0, top: 0, width: 1, height: 1, scale: 1 },
   useCustomAudio: false,

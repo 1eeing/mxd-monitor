@@ -6,10 +6,15 @@
 export class AlarmPlayer {
   private audio: HTMLAudioElement | null = null
   private enabled = false
+  private currentSrc: string = ''
 
-  /** 设置报警音源（会停掉当前播放） */
+  /** 设置报警音源（会停掉当前播放），并回收旧 blob URL 防止泄漏 */
   setSource(src: string): void {
     if (this.enabled) this.stop()
+    if (this.currentSrc.startsWith('blob:')) {
+      URL.revokeObjectURL(this.currentSrc)
+    }
+    this.currentSrc = src
     const audio = new Audio(src)
     audio.loop = true
     audio.preload = 'auto'

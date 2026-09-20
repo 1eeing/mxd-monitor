@@ -8,6 +8,9 @@ export const OCR_MODELS = {
 /** 默认报警音频（用户放入的 sound.mp3，见 public/audio/） */
 export const DEFAULT_ALARM_AUDIO = '/audio/sound.mp3'
 
+/** 自定义报警音频存入 IndexedDB 的 key */
+export const CUSTOM_ALARM_AUDIO_KEY = 'custom-alarm-audio'
+
 /** 默认识别间隔（毫秒） */
 export const DEFAULT_OCR_INTERVAL_MS = 1500
 

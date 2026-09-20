@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { UseMonitor } from '../hooks/useMonitor'
 import type { CropRegion } from '../types'
 
@@ -24,6 +24,7 @@ export function MonitorPanel({ monitor, crop, cropSelecting, onCropChange, onCro
     alarmActive,
     lastOcr,
     isCapturing,
+    engineInfo,
     videoRef,
     start,
     stop,
@@ -36,8 +37,54 @@ export function MonitorPanel({ monitor, crop, cropSelecting, onCropChange, onCro
   const [selStart, setSelStart] = useState<{ x: number; y: number } | null>(null)
   const [selEnd, setSelEnd] = useState<{ x: number; y: number } | null>(null)
 
-  // 元素像素 → 0~1 比例（相对视频内容区域；若实际有留边会略有偏差，但足够精确）
-  const toNorm = (px: number, max: number) => Math.min(1, Math.max(0, px / max))
+  // 视频内容在容器内的实际显示区域（处理 object-fit: contain 的黑边/留边）。
+  // 用 state 存尺寸，渲染时不直接读 ref。圈选坐标与轮廓都基于它换算，
+  // 保证「屏幕上框的框」和「真实帧上被裁的区域」完全一致。
+  const [contentBox, setContentBox] = useState({ left: 0, top: 0, width: 0, height: 0 })
+
+  useEffect(() => {
+    const box = videoBoxRef.current
+    const video = videoRef.current
+    if (!box || !video) return
+
+    let vw = video.videoWidth || 0
+    let vh = video.videoHeight || 0
+
+    const compute = () => {
+      const W = box.clientWidth
+      const H = box.clientHeight
+      if (W <= 0 || H <= 0 || !vw || !vh) {
+        // 尚无画面时退化为整个容器，轮廓仍然可显示
+        setContentBox({ left: 0, top: 0, width: W, height: H })
+        return
+      }
+      const scale = Math.min(W / vw, H / vh)
+      const cw = vw * scale
+      const ch = vh * scale
+      setContentBox({ left: (W - cw) / 2, top: (H - ch) / 2, width: cw, height: ch })
+    }
+
+    const syncVideoSize = () => {
+      vw = video.videoWidth || 0
+      vh = video.videoHeight || 0
+      compute()
+    }
+
+    compute()
+    const ro = new ResizeObserver(compute)
+    ro.observe(box)
+    video.addEventListener('loadedmetadata', syncVideoSize)
+    video.addEventListener('resize', syncVideoSize)
+    return () => {
+      ro.disconnect()
+      video.removeEventListener('loadedmetadata', syncVideoSize)
+      video.removeEventListener('resize', syncVideoSize)
+    }
+  }, [videoRef])
+
+  // 元素像素 → 0~1 比例（相对视频内容区域，扣除 contain 留边）
+  const normX = (px: number) => Math.min(1, Math.max(0, (px - contentBox.left) / contentBox.width))
+  const normY = (px: number) => Math.min(1, Math.max(0, (px - contentBox.top) / contentBox.height))
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!cropSelecting) return
@@ -59,27 +106,34 @@ export function MonitorPanel({ monitor, crop, cropSelecting, onCropChange, onCro
 
   const onPointerUp = () => {
     if (!cropSelecting || !selStart || !selEnd) return
-    const box = videoBoxRef.current
-    if (box) {
-      const w = box.clientWidth
-      const h = box.clientHeight
-      if (w > 0 && h > 0) {
-        const left = Math.min(selStart.x, selEnd.x)
-        const top = Math.min(selStart.y, selEnd.y)
-        const width = Math.abs(selEnd.x - selStart.x)
-        const height = Math.abs(selEnd.y - selStart.y)
-        if (width > 8 && height > 8) {
-          // 至少 8px 才算有效框选，写回 0~1 比例
-          const next: CropRegion = {
-            ...(crop ?? { enabled: false, left: 0, top: 0, width: 1, height: 1, scale: 1 }),
-            enabled: true,
-            left: toNorm(left, w),
-            top: toNorm(top, h),
-            width: Math.min(1, toNorm(width, w)),
-            height: Math.min(1, toNorm(height, h)),
-          }
-          onCropChange?.(next)
+    if (contentBox.width <= 0 || contentBox.height <= 0) {
+      setSelStart(null)
+      setSelEnd(null)
+      onCropSelectDone?.()
+      return
+    }
+    const leftPx = Math.min(selStart.x, selEnd.x)
+    const topPx = Math.min(selStart.y, selEnd.y)
+    const rightPx = Math.max(selStart.x, selEnd.x)
+    const bottomPx = Math.max(selStart.y, selEnd.y)
+    const widthPx = rightPx - leftPx
+    const heightPx = bottomPx - topPx
+    if (widthPx > 8 && heightPx > 8) {
+      // 至少 8px 才算有效框选；映射到「视频内容区域」的 0~1 比例写回
+      const left = normX(leftPx)
+      const right = normX(rightPx)
+      const top = normY(topPx)
+      const bottom = normY(bottomPx)
+      if (right > left && bottom > top) {
+        const next: CropRegion = {
+          ...(crop ?? { enabled: false, left: 0, top: 0, width: 1, height: 1, scale: 1 }),
+          enabled: true,
+          left,
+          top,
+          width: right - left,
+          height: bottom - top,
         }
+        onCropChange?.(next)
       }
     }
     setSelStart(null)
@@ -97,21 +151,43 @@ export function MonitorPanel({ monitor, crop, cropSelecting, onCropChange, onCro
         }
       : null
 
-  // 已有识别区域按 0~1 比例换算成元素像素轮廓
-  const cropOutline =
-    crop?.enabled && videoBoxRef.current
+  // 已有识别区域：换算为元素像素绘制轮廓（自动扣除 contain 留边、随尺寸缩放）。
+  // 尚未量到内容区域时退化为百分比兜底
+  const cropHasContent = contentBox.width > 0 && contentBox.height > 0
+  const cropOutline = crop?.enabled
+    ? cropHasContent
       ? {
-          left: crop.left * videoBoxRef.current.clientWidth,
-          top: crop.top * videoBoxRef.current.clientHeight,
-          width: crop.width * videoBoxRef.current.clientWidth,
-          height: crop.height * videoBoxRef.current.clientHeight,
+          left: contentBox.left + crop.left * contentBox.width,
+          top: contentBox.top + crop.top * contentBox.height,
+          width: crop.width * contentBox.width,
+          height: crop.height * contentBox.height,
         }
-      : null
+      : {
+          left: `${(crop.left * 100).toFixed(2)}%`,
+          top: `${(crop.top * 100).toFixed(2)}%`,
+          width: `${(crop.width * 100).toFixed(2)}%`,
+          height: `${(crop.height * 100).toFixed(2)}%`,
+        }
+    : null
 
   return (
     <div className="monitor-panel">
       <div className={`video-wrap${isCapturing ? ' capturing' : ''}`}>
         <video ref={videoRef} muted playsInline aria-label="屏幕共享预览" />
+
+        {/* 采集状态徽标：黑色预览时能立刻看出「是否真的在采集」 */}
+        {isCapturing && (
+          <div className="capture-badge">
+            <span className="capture-dot" />
+            共享中{engineInfo ? ` · ${engineInfo}` : ''}
+          </div>
+        )}
+        {status === 'running' && !isCapturing && (
+          <div className="capture-badge warn">
+            <span className="capture-dot" />
+            未共享（共享已中断）
+          </div>
+        )}
 
         {/* 识别区域轮廓（非圈选模式时只读展示） */}
         {cropOutline && !cropSelecting && (
