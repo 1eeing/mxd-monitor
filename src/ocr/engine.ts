@@ -27,17 +27,23 @@ export interface InitResult {
 }
 
 /**
- * 初始化 OCR 引擎。
- * - webgpu：使用 GPU（Chrome 113+，WebGPU），速度快
- * - wasm：CPU 回退
- * WASM 文件由本地 /onnx/ 目录托管。
+ * WASM 运行时来源：
+ * - WebGPU(jsep)：onnxruntime-web 的 jsep.wasm 有 28MB，超过 EdgeOne Makers 免费版单文件
+ *   25MB 上限，改用 npmmirror（国内可达的 npm 镜像 CDN）按固定版本加载；
+ * - CPU(wasm)：ort-wasm-simd-threaded.wasm 只有 14MB，由 /onnx/ 本地托管，离线可用。
+ * wasmPaths 为目录前缀，ort 会按需拉取对应的 .mjs 加载器与 .wasm 二进制。
  */
+const WASM_PATHS: Record<OcrBackend, string> = {
+  webgpu: 'https://registry.npmmirror.com/onnxruntime-web/1.30.0/files/dist/',
+  wasm: '/onnx/',
+}
+
 export async function initOcr(backend: OcrBackend): Promise<InitResult> {
   if (ocr && currentBackend === backend) {
     return { backend, provider: currentBackend, elapsedMs: 0 }
   }
 
-  ort.env.wasm.wasmPaths = '/onnx/'
+  ort.env.wasm.wasmPaths = WASM_PATHS[backend]
   const onnxOptions: ort.InferenceSession.SessionOptions = {
     executionProviders: backend === 'webgpu' ? ['webgpu'] : ['wasm'],
   }
