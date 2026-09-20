@@ -183,7 +183,7 @@ export function SettingsPanel({ settings, onChange, onStartCropSelect }: Setting
             </button>
             <p className="hint">点击后关闭本弹窗，回到监控画面，按住鼠标左键在视频上拖拽框选；松手即生效。</p>
             <label className="row">
-              <span>识别放大倍率</span>
+              <span className="field-label">识别放大倍率</span>
               <select
                 value={settings.crop.scale}
                 onChange={(e) => updateCropScale(Number(e.target.value))}

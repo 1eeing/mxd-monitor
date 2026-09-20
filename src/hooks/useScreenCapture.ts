@@ -71,6 +71,8 @@ export function useScreenCapture(onStreamEnded?: () => void): ScreenCapture {
       stop()
       setError(err instanceof Error ? err.message : String(err))
       setCapturing(false)
+      // 重新抛出，让调用方（useMonitor）区分「用户取消选择」与真正的启动失败
+      throw err
     }
   }, [setCapturing, stop, handleStreamEnded])
 

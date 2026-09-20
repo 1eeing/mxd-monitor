@@ -1,16 +1,23 @@
 :root {
-  --bg: #12141c;
-  --bg-panel: #1b1e2b;
-  --bg-input: #242838;
-  --border: #32374a;
-  --text: #e6e8f0;
-  --text-dim: #9aa0b5;
+  --bg: #eef1f6;
+  --bg-panel: #ffffff;
+  --bg-input: #f2f4f8;
+  --bg-hover: #e4e8f0;
+  --border: #d9dee8;
+  --text: #222737;
+  --text-dim: #79849c;
   --accent: #f2a93b;
   --accent-strong: #e8930f;
   --danger: #e5484d;
-  --ok: #46a758;
+  --ok: #2e9e4f;
   --radius: 10px;
   font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+}
+
+input[type='checkbox'],
+input[type='radio'],
+input[type='range'] {
+  accent-color: var(--accent);
 }
 
 * {
@@ -172,7 +179,7 @@ body,
 
 .video-placeholder {
   text-align: center;
-  color: var(--text-dim);
+  color: #d4d9e6;
   padding: 24px;
 }
 
@@ -182,10 +189,46 @@ body,
 
 .video-placeholder .hint {
   font-size: 13px;
+  color: #97a1b8;
 }
 
 .video-placeholder.error .hint {
-  color: var(--danger);
+  color: #ff9497;
+}
+
+/* ---------- 初始化进度条 ---------- */
+.load-progress {
+  position: relative;
+  width: 260px;
+  max-width: 70%;
+  height: 8px;
+  margin: 12px auto 6px;
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.load-progress-fill {
+  position: absolute;
+  inset: 0;
+  width: 0;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.load-progress.indeterminate .load-progress-fill {
+  width: 35%;
+  animation: progress-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
 }
 
 /* ---------- 识别区域框选 / 轮廓 ---------- */
@@ -323,7 +366,7 @@ body,
   border: 1px dashed var(--border);
   border-radius: var(--radius);
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(15, 23, 42, 0.02);
 }
 
 .ocr-debug h3 {
@@ -381,7 +424,7 @@ body,
 
 .log-error {
   border-left: 3px solid var(--danger);
-  color: #ffb3b6;
+  color: var(--danger);
 }
 
 /* ---------- 按钮 ---------- */
@@ -403,7 +446,7 @@ body,
 }
 
 .btn:hover {
-  background: #2c3145;
+  background: var(--bg-hover);
 }
 
 .btn.primary {
@@ -582,7 +625,8 @@ body,
 .field-label {
   min-width: 120px;
   font-size: 13px;
-  color: var(--text-dim);
+  font-weight: 600;
+  color: var(--text);
 }
 
 .field-value {

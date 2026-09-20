@@ -25,6 +25,7 @@ export function MonitorPanel({ monitor, crop, cropSelecting, onCropChange, onCro
     lastOcr,
     isCapturing,
     engineInfo,
+    loadProgress,
     videoRef,
     start,
     stop,
@@ -227,7 +228,17 @@ export function MonitorPanel({ monitor, crop, cropSelecting, onCropChange, onCro
         {status === 'initializing' && (
           <div className="video-placeholder">
             <p>正在初始化 …</p>
-            <p className="hint">加载 OCR 模型并进行首帧识别，请稍候</p>
+            <div className={`load-progress${loadProgress == null ? ' indeterminate' : ''}`}>
+              <div
+                className="load-progress-fill"
+                style={loadProgress != null ? { width: `${loadProgress}%` } : undefined}
+              />
+            </div>
+            <p className="hint">
+              {loadProgress != null
+                ? `正在下载识别资源 ${Math.round(loadProgress)}%`
+                : '加载 OCR 引擎与模型，请稍候'}
+            </p>
           </div>
         )}
         {status === 'error' && (

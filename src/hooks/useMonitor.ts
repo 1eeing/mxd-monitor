@@ -39,6 +39,8 @@ export interface UseMonitor {
   lastOcr: string
   isCapturing: boolean
   screenError: string | null
+  /** 初始化阶段的资源加载进度 0~100；非初始化状态为 null */
+  loadProgress: number | null
   videoRef: React.RefObject<HTMLVideoElement | null>
   start: () => Promise<void>
   stop: () => void
@@ -55,6 +57,7 @@ export function useMonitor(settings: AppSettings): UseMonitor {
   const [alarmActive, setAlarmActive] = useState(false)
   const [engineInfo, setEngineInfo] = useState('')
   const [lastOcr, setLastOcr] = useState('')
+  const [loadProgress, setLoadProgress] = useState<number | null>(null)
   const settingsRef = useRef(settings)
   // 供稳定的回调读取最新 status
   const statusRef = useRef(status)
@@ -118,6 +121,7 @@ export function useMonitor(settings: AppSettings): UseMonitor {
     missStreakRef.current = 0
     alarmSuppressedRef.current = false
     setStatus('idle')
+    setLoadProgress(null)
     addLog('info', '屏幕共享已结束，监控已停止')
   }, [addLog, setAlarm])
 
@@ -242,6 +246,7 @@ export function useMonitor(settings: AppSettings): UseMonitor {
     setHits([])
     setLastOcr('')
     setStatus('initializing')
+    setLoadProgress(0)
     addLog('info', '弹出窗口选择器，请选择冒险岛游戏窗口…')
     screenSelfStopRef.current = false
     alarmSuppressedRef.current = false
@@ -255,7 +260,8 @@ export function useMonitor(settings: AppSettings): UseMonitor {
         'info',
         `初始化 OCR 引擎（${s.backend === 'webgpu' ? 'WebGPU GPU 加速' : 'WASM CPU 回退'}）…`,
       )
-      const info = await initOcr(s.backend)
+      const info = await initOcr(s.backend, setLoadProgress)
+      setLoadProgress(100)
       setEngineInfo(`${info.provider.toUpperCase()} · ${Math.round(info.elapsedMs)}ms`)
       await applyAlarmSource()
       // 防御：选完窗口后若共享在初始化期间就已经中断（例如选中了无法采集的独占全屏窗口），
@@ -270,7 +276,14 @@ export function useMonitor(settings: AppSettings): UseMonitor {
       setStatus('running')
     } catch (err) {
       screen.stop()
+      setLoadProgress(null)
       const msg = err instanceof Error ? err.message : String(err)
+      // 用户在窗口选择器里点了取消/关闭：不算失败，安静地回到「未选择」状态
+      if (err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'AbortError')) {
+        setStatus('idle')
+        addLog('info', '已取消选择，未开始监控')
+        return
+      }
       setError(msg)
       setStatus('error')
       addLog('error', msg)
@@ -290,6 +303,7 @@ export function useMonitor(settings: AppSettings): UseMonitor {
     alarmSuppressedRef.current = false
     screen.stop()
     setStatus('idle')
+    setLoadProgress(null)
     addLog('info', '已停止监控')
   }, [addLog, screen, setAlarm])
 
@@ -338,6 +352,7 @@ export function useMonitor(settings: AppSettings): UseMonitor {
     lastOcr,
     isCapturing: screen.isCapturing,
     screenError: screen.error,
+    loadProgress,
     videoRef,
     start,
     stop,
