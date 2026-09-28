@@ -1,14 +1,16 @@
 {
   "name": "mxd-monitor",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build && node scripts/strip-ort-assets.mjs",
     "typecheck": "tsc -b",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "version:fix": "npm version patch",
+    "version:feat": "npm version minor"
   },
   "dependencies": {
     "@gutenye/ocr-browser": "^1.4.9",
