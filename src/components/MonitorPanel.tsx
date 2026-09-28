@@ -23,6 +23,7 @@ export function MonitorPanel({ monitor, crop, cropSelecting, onCropChange, onCro
     hits,
     alarmActive,
     lastOcr,
+    stalled,
     isCapturing,
     engineInfo,
     loadProgress,
@@ -253,6 +254,14 @@ export function MonitorPanel({ monitor, crop, cropSelecting, onCropChange, onCro
 
       {status === 'running' && (
         <>
+          {stalled && (
+            <div className="alert-banner">
+              <strong>监控已失活</strong>
+              <span>
+                长时间没有成功识别一帧，当前<strong>不会产生任何报警</strong>。请「停止监控」后重新开始。
+              </span>
+            </div>
+          )}
           <div className="hit-area">
             {hits.length > 0 ? (
               <ul className="hit-list">

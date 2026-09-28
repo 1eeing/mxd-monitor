@@ -317,6 +317,24 @@ body,
   min-height: 44px;
 }
 
+/* 监控失活告警：必须比普通提示更醒目，避免用户以为「还在正常监控」 */
+.alert-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--danger);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  background: rgba(229, 72, 77, 0.08);
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.alert-banner strong {
+  font-size: 14px;
+}
+
 .hit-none {
   color: var(--text-dim);
   margin: 4px 0;

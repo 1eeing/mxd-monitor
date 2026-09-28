@@ -25,13 +25,20 @@ export class AlarmPlayer {
     return this.enabled
   }
 
-  start(): void {
-    if (!this.audio || this.enabled) return
+  /**
+   * 开始循环播放。返回的 Promise 在播放失败时 reject（如浏览器自动播放策略拦截、
+   * 音频设备被占用），调用方应据此记录日志——静默失败会让「命中了却没声音」无从排查。
+   */
+  start(): Promise<void> {
+    if (!this.audio || this.enabled) return Promise.resolve()
     this.enabled = true
-    void this.audio.play().catch(() => {
-      // 浏览器自动播放策略等导致的失败：不抛错，仅复位状态
-      this.enabled = false
-    })
+    return this.audio.play().then(
+      () => undefined,
+      (err: unknown) => {
+        this.enabled = false
+        throw err
+      },
+    )
   }
 
   stop(): void {
