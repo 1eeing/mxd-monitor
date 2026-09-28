@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>WebRTC LAN spike</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px; font: 14px/1.55 ui-monospace, Menlo, Consolas, monospace;
+         background: #0d1117; color: #c9d1d9; }
+  h1 { font-size: 16px; margin: 0 0 10px; }
+  h2 { font-size: 13px; margin: 18px 0 6px; color: #7d8590; text-transform: uppercase; letter-spacing: .08em; }
+  section { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 2px 0; vertical-align: top; }
+  td:first-child { color: #7d8590; width: 46%; padding-right: 8px; word-break: break-all; }
+  .ok { color: #3fb950; } .bad { color: #f85149; } .warn { color: #d29922; } .dim { color: #6e7681; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-weight: 700; }
+  .b-ok { background: #1a7f37; color: #fff; } .b-bad { background: #b62324; color: #fff; }
+  .b-wait { background: #30363d; color: #c9d1d9; } .b-warn { background: #9e6a03; color: #fff; }
+  video, canvas { width: 100%; border-radius: 6px; background: #000; display: block; margin-bottom: 8px; }
+  button { font: inherit; padding: 10px 12px; margin: 4px 6px 0 0; border-radius: 6px; cursor: pointer;
+           background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+  button:active { background: #30363d; }
+  button.go { background: #238636; border-color: #2ea043; color: #fff; font-weight: 700; }
+  select { font: inherit; padding: 8px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; }
+  #log { max-height: 200px; overflow: auto; font-size: 12px; }
+  #log div { padding: 1px 0; border-bottom: 1px solid #21262d; }
+  .grid { display: grid; gap: 10px; }
+  @media (min-width: 760px) { .grid { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>WebRTC 局域网 spike · <span id="roleTag">?</span> <span class="badge b-wait" id="connBadge">连接中</span></h1>
+
+<div class="grid">
+<div>
+  <section>
+    <h2>画面</h2>
+    <canvas id="cv" width="640" height="360"></canvas>
+    <video id="vid" autoplay playsinline muted></video>
+    <div class="dim" id="visNote"></div>
+  </section>
+
+  <section id="ctrl" style="margin-top:10px">
+    <h2>码率 / 帧率限制</h2>
+    <div>
+      <select id="fps"><option value="1">1 fps</option><option value="3" selected>3 fps</option><option value="10">10 fps</option><option value="30">30 fps</option></select>
+      <select id="br"><option value="150000">150 kbps</option><option value="300000" selected>300 kbps</option><option value="800000">800 kbps</option><option value="2000000">2 Mbps</option></select>
+      <button class="go" id="apply">应用</button>
+    </div>
+    <div class="dim" style="margin-top:6px">用来验证「3fps / 300kbps」这个推荐值是否够看、且不卡 PC。</div>
+  </section>
+
+  <section id="audioSec" style="margin-top:10px; display:none">
+    <h2>音频解锁测试（iOS 关键风险）</h2>
+    <button class="go" id="unlock">① 模拟用户手势解锁</button>
+    <button id="playA">② 立刻无手势播放</button>
+    <button id="playB">③ 等 10s 后无手势播放</button>
+    <table style="margin-top:8px">
+      <tr><td>① 手势解锁</td><td id="rUnlock">未测</td></tr>
+      <tr><td>② 手势后立即无手势播</td><td id="rA">未测</td></tr>
+      <tr><td>③ 10s 后无手势播（真实报警场景）</td><td id="rB">未测</td></tr>
+      <tr><td>DataChannel 回调里播（最坏情况）</td><td id="rDC">未测</td></tr>
+    </table>
+    <div class="dim" style="margin-top:6px">用真实的 public/audio/sound.mp3。若 ③ 失败，正式方案必须靠按钮解锁。</div>
+  </section>
+</div>
+
+<div>
+  <section>
+    <h2>能力探测</h2>
+    <table><tbody id="probe"></tbody></table>
+  </section>
+
+  <section style="margin-top:10px">
+    <h2>PeerConnection 状态</h2>
+    <table><tbody id="pcState"></tbody></table>
+  </section>
+
+  <section style="margin-top:10px">
+    <h2>getStats</h2>
+    <table><tbody id="stats"></tbody></table>
+  </section>
+
+  <section style="margin-top:10px">
+    <h2>日志</h2>
+    <div id="log"></div>
+    <button class="go" id="copy">复制报告</button>
+    <span id="copied" class="ok"></span>
+  </section>
+</div>
+</div>
+
+<script type="module">
+const $ = (s) => document.querySelector(s)
+const role = new URLSearchParams(location.search).get('role') === 'phone' ? 'phone' : 'pc'
+$('#roleTag').textContent = role
+$('#visNote').textContent = role === 'pc' ? '上面是本机 canvas 源' : '上面是 PC 推过来的画面'
+
+const S = { probe: {}, timeline: [], stats: null, audio: {}, dcRx: 0, dcTx: 0, cand: { local: [], remote: [] } }
+let pc = null, dc = null, sender = null
+
+const t0 = Date.now()
+const ts = () => ((Date.now() - t0) / 1000).toFixed(1) + 's'
+function log(msg, kind = '') {
+  S.timeline.push({ t: ts(), kind, msg: String(msg).slice(0, 300) })
+  const el = document.createElement('div')
+  el.className = kind
+  el.textContent = `[${ts()}] ${msg}`
+  $('#log').append(el)
+  $('#log').scrollTop = $('#log').scrollHeight
+}
+function kv(tbody, k, v, cls = '') {
+  const tr = document.createElement('tr')
+  tr.innerHTML = `<td></td><td class="${cls}"></td>`
+  tr.children[0].textContent = k
+  tr.children[1].textContent = v
+  tbody.append(tr)
+}
+const fmt = (n, d = 1) => (typeof n === 'number' && isFinite(n) ? n.toFixed(d) : '—')
+const kbps = (b) => (typeof b === 'number' ? (b * 8 / 1000).toFixed(0) + ' kbps' : '—')
+
+// ---------- 能力探测：直接回答 "非 secure context 能不能用" ----------
+const audio = new Audio('/audio/sound.mp3')
+S.probe = {
+  ua: navigator.userAgent,
+  isSecureContext: window.isSecureContext,
+  hasRTCPeerConnection: typeof RTCPeerConnection !== 'undefined',
+  hasRTCDataChannel: typeof RTCDataChannel !== 'undefined',
+  hasRTCIceTransport: typeof RTCIceTransport !== 'undefined',
+  hasMediaDevices: !!navigator.mediaDevices,      // secure-context 门控
+  hasWakeLock: !!navigator.wakeLock,              // secure-context 门控
+  hasServiceWorker: 'serviceWorker' in navigator,
+  canPlayMp3: audio.canPlayType('audio/mpeg') || 'no',
+  touchPoints: navigator.maxTouchPoints,
+  screen: `${screen.width}x${screen.height} @${devicePixelRatio}x`,
+  connectionType: navigator.connection?.effectiveType ?? '—',
+}
+for (const [k, v] of Object.entries(S.probe)) {
+  let cls = ''
+  if (k.startsWith('has') || k === 'isSecureContext') cls = v ? 'ok' : 'bad'
+  if (k === 'canPlayMp3' && v === 'no') cls = 'bad'
+  kv($('#probe'), k, String(v), cls)
+}
+log(`探测完成 · isSecureContext=${S.probe.isSecureContext} · RTC=${S.probe.hasRTCPeerConnection}`)
+
+// ---------- PC 端：canvas 动画 -> captureStream ----------
+// detail 模式：画大量随机色块，模拟真实游戏画面的编码负载。
+// 否则纯色渐变的码率只有 ~30kbps，测出来的推荐档位没有代表性。
+let DETAIL = true
+window.__setDetail = (v) => { DETAIL = v }
+if (role === 'pc') {
+  const cv = $('#cv'), ctx = cv.getContext('2d')
+  const noise = document.createElement('canvas')
+  noise.width = 160; noise.height = 90
+  const nctx = noise.getContext('2d')
+  const nimg = nctx.createImageData(160, 90)
+  for (let i = 0; i < nimg.data.length; i += 4) {
+    const v = Math.random() * 255
+    nimg.data[i] = v; nimg.data[i + 1] = Math.random() * 255
+    nimg.data[i + 2] = Math.random() * 255; nimg.data[i + 3] = 90
+  }
+  nctx.putImageData(nimg, 0, 0)
+  let n = 0
+  setInterval(() => {
+    n++
+    const g = ctx.createLinearGradient(0, 0, cv.width, cv.height)
+    g.addColorStop(0, `hsl(${(n * 7) % 360} 70% 45%)`)
+    g.addColorStop(1, `hsl(${(n * 7 + 90) % 360} 70% 25%)`)
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, cv.width, cv.height)
+    if (DETAIL) {
+      ctx.globalAlpha = 0.55
+      for (let i = 0; i < 260; i++) {
+        ctx.fillStyle = `hsl(${Math.random() * 360} 80% ${30 + Math.random() * 50}%)`
+        ctx.fillRect(Math.random() * cv.width, Math.random() * cv.height,
+                     4 + Math.random() * 60, 3 + Math.random() * 40)
+      }
+      ctx.globalAlpha = 1
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(noise, 0, 0, cv.width, cv.height)
+    }
+    ctx.fillStyle = '#fff'
+    ctx.font = 'bold 48px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillText('FRAME ' + n, cv.width / 2, cv.height / 2)
+    ctx.font = '20px monospace'
+    ctx.fillText('帧号在动 = 视频真的在传', cv.width / 2, cv.height / 2 + 40)
+  }, 33)
+}
+
+// ---------- 信令 ----------
+const ws = new WebSocket(`ws://${location.host}/rtc?role=${role}`)
+let phoneId = null
+const send = (m) => ws.readyState === 1 && ws.send(JSON.stringify(m))
+ws.onopen = () => { log('信令已连接'); setBadge('b-wait', '信令OK') }
+ws.onclose = () => { log('信令断开', 'bad'); setBadge('b-bad', '信令断') }
+ws.onerror = () => log('信令错误', 'bad')
+
+function setBadge(cls, text) { const b = $('#connBadge'); b.className = 'badge ' + cls; b.textContent = text }
+
+function newPC() {
+  // 刻意 iceServers: [] —— 同网段本来就该只有 host candidate,先验最小可用面
+  pc = new RTCPeerConnection({ iceServers: [] })
+  pc.onicecandidate = (e) => {
+    if (!e.candidate) return
+    send({ t: 'ice', to: role === 'pc' ? phoneId : 'pc', candidate: e.candidate.toJSON() })
+  }
+  pc.ontrack = (e) => {
+    log('ontrack 收到 ' + e.track.kind, 'ok')
+    $('#vid').srcObject = e.streams[0] ?? new MediaStream([e.track])
+    $('#vid').play().then(() => log('video 播放成功', 'ok')).catch((err) => log('video 播放失败 ' + err.name, 'bad'))
+  }
+  pc.ondatachannel = (e) => {
+    dc = e.channel
+    log('DataChannel 打开: ' + dc.label, 'ok')
+    dc.onmessage = (ev) => {
+      S.dcRx++
+      const d = JSON.parse(ev.data)
+      // 真实报警形态：DataChannel 回调里播音频，且此刻没有任何用户手势
+      if (d.t === 'ocr') { audio.play().then(() => audio.pause()).then(
+        () => { if (S.audio.dc === undefined) { S.audio.dc = 'OK'; set('#rDC', 'OK', 'ok'); } },
+        (err) => { if (S.audio.dc === undefined) { S.audio.dc = 'BLOCKED ' + err.name; set('#rDC', '被拒 ' + err.name, 'bad'); } },
+      ) }
+    }
+  }
+  pc.onconnectionstatechange = () => { paintPC(); onState('connectionState', pc.connectionState) }
+  pc.oniceconnectionstatechange = () => { paintPC(); onState('iceConnectionState', pc.iceConnectionState) }
+  pc.onsignalingstatechange = () => paintPC()
+  paintPC()
+  return pc
+}
+function onState(name, v) {
+  log(`${name} -> ${v}`, v === 'connected' || v === 'completed' ? 'ok' : v === 'failed' ? 'bad' : '')
+  if (pc && (pc.connectionState === 'connected' || pc.connectionState === 'failed')) {
+    setBadge(pc.connectionState === 'connected' ? 'b-ok' : 'b-bad', pc.connectionState)
+  }
+  if (v === 'failed') log('ICE 失败 —— 若是真机,检查:AP 隔离 / Windows 防火墙 UDP / VPN 虚拟网卡', 'bad')
+}
+function paintPC() {
+  const b = $('#pcState')
+  if (!pc) { kv(b, 'RTCPeerConnection', '未创建'); return }
+  for (const k of ['connectionState', 'iceConnectionState', 'iceGatheringState', 'signalingState']) {
+    const v = pc[k]
+    const cls = /connected|completed/.test(v) ? 'ok' : v === 'failed' ? 'bad' : ''
+    const old = b.querySelector(`[data-k="${k}"]`)
+    if (old) old.textContent = v
+    else { const tr = document.createElement('tr'); tr.dataset.k = k; tr.innerHTML = `<td>${k}</td><td class="${cls}"></td>`; tr.children[1].textContent = v; b.append(tr) }
+  }
+}
+function set(sel, txt, cls) { const e = $(sel); e.textContent = txt; e.className = cls }
+
+ws.onmessage = async (ev) => {
+  const m = JSON.parse(ev.data)
+  if (m.t === 'ready') {
+    if (role === 'phone') {
+      phoneId = m.id
+      log('已注册,等待 PC 发起')
+      $('#audioSec').style.display = 'block'
+    } else log('信令就绪')
+    return
+  }
+  if (m.t === 'peer') {
+    phoneId = m.id
+    log('手机上线 ' + m.id + ' → 发起 offer', 'ok')
+    newPC()
+    const stream = $('#cv').captureStream(30)
+    sender = pc.addTrack(stream.getVideoTracks()[0], stream)
+    dc = pc.createDataChannel('mxd', { ordered: true })
+    dc.onmessage = (e2) => { S.dcRx++; if (e2.data?.t === 'ping') log('收到 ping') }
+    const offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+    send({ t: 'offer', to: phoneId, sdp: pc.localDescription })
+    setInterval(() => { if (dc?.readyState === 'open') { S.dcTx++; dc.send(JSON.stringify({ t: 'ocr', n: S.dcTx, at: Date.now() })) } }, 1000)
+    return
+  }
+  if (m.t === 'peer-leave') { log('手机 ' + m.id + ' 掉线', 'warn'); return }
+  if (m.t === 'bye') { log('被踢：' + m.why, 'warn'); return }
+  if (m.t === 'offer') {
+    log('收到 offer')
+    newPC()
+    await pc.setRemoteDescription(m.sdp)
+    const ans = await pc.createAnswer()
+    await pc.setLocalDescription(ans)
+    send({ t: 'answer', to: 'pc', sdp: pc.localDescription })
+    return
+  }
+  if (m.t === 'answer') { await pc.setRemoteDescription(m.sdp); log('收到 answer', 'ok'); return }
+  if (m.t === 'ice') {
+    try { await pc.addIceCandidate(m.candidate) } catch (err) { log('addIceCandidate 失败 ' + err.message, 'warn') }
+    return
+  }
+}
+
+// ---------- 限码率 / 限帧率 ----------
+window.__applyLimits = async (fps, br, scale = 2) => {
+  if (!sender) { log('还没有 video sender', 'warn'); return 'no-sender' }
+  const p = sender.getParameters()
+  if (!p.encodings || !p.encodings.length) p.encodings = [{}]
+  p.encodings[0].maxFramerate = Number(fps)
+  p.encodings[0].maxBitrate = Number(br)
+  p.encodings[0].scaleResolutionDownBy = scale
+  await sender.setParameters(p)
+  log(`已应用 maxFramerate=${p.encodings[0].maxFramerate} maxBitrate=${p.encodings[0].maxBitrate} scale=${scale}`, 'ok')
+  return sender.getParameters().encodings[0]
+}
+$('#apply').onclick = () => window.__applyLimits($('#fps').value, $('#br').value)
+if (role === 'phone') $('#ctrl').style.display = 'none'
+
+// ---------- 音频解锁 ----------
+$('#unlock').onclick = async () => {
+  try { await audio.play(); audio.pause(); S.audio.unlock = 'OK'; set('#rUnlock', 'OK', 'ok') }
+  catch (e) { S.audio.unlock = 'BLOCKED ' + e.name; set('#rUnlock', '被拒 ' + e.name, 'bad') }
+}
+$('#playA').onclick = async () => {
+  try { await audio.play(); setTimeout(() => audio.pause(), 300); S.audio.a = 'OK'; set('#rA', 'OK', 'ok') }
+  catch (e) { S.audio.a = 'BLOCKED ' + e.name; set('#rA', '被拒 ' + e.name, 'bad') }
+}
+$('#playB').onclick = async () => {
+  try { await audio.play(); setTimeout(() => audio.pause(), 300); S.audio.b = 'OK'; set('#rB', 'OK', 'ok') }
+  catch (e) { S.audio.b = 'BLOCKED ' + e.name; set('#rB', '被拒 ' + e.name, 'bad') }
+}
+
+// ---------- getStats ----------
+setInterval(async () => {
+  if (!pc) return
+  const rs = await pc.getStats()
+  let tx, rx, pair, codec
+  const byId = new Map()
+  rs.forEach((s) => byId.set(s.id, s))
+  rs.forEach((s) => {
+    if (s.type === 'outbound-rtp' && s.kind === 'video') tx = s
+    if (s.type === 'inbound-rtp' && s.kind === 'video') rx = s
+    if (s.type === 'candidate-pair' && s.state === 'succeeded' && (s.nominated || s.selected)) pair = s
+    if (s.type === 'codec' && s.mimeType?.startsWith('video')) codec ??= s
+  })
+  // 精确按 pair 引用的 id 取候选,否则会取到遍历顺序里的第一个 host 候选（可能不是真正在用的那条）
+  const lc = pair && byId.get(pair.localCandidateId)
+  const rc = pair && byId.get(pair.remoteCandidateId)
+  const addr = (c) => (c ? `${c.address ?? '?'}:${c.port ?? '?'} [${c.candidateType}/${c.protocol ?? '?'}]` : '—')
+  S.stats = {
+    ts: new Date().toISOString(),
+    tx: tx && { bytesSent: tx.bytesSent, framesEncoded: tx.framesEncoded, w: tx.frameWidth, h: tx.frameHeight,
+                qualityLimitation: tx.qualityLimitationReason, nack: tx.nackCount, pli: tx.pliCount },
+    rx: rx && { bytesReceived: rx.bytesReceived, framesDecoded: rx.framesDecoded, framesDropped: rx.framesDropped,
+                packetsLost: rx.packetsLost },
+    pair: pair && { local: addr(lc), remote: addr(rc),
+                    rttMs: fmt((pair.currentRoundTripTime ?? 0) * 1000, 2), availDown: kbps(pair.availableIncomingBitrate),
+                    bytesSent: pair.bytesSent, bytesReceived: pair.bytesReceived },
+    codec: codec && { mime: codec.mimeType },
+    dc: { rx: S.dcRx, tx: S.dcTx, state: dc?.readyState ?? '—' },
+  }
+  const b = $('#stats')
+  b.textContent = ''
+  const row = (k, v, cls = '') => kv(b, k, v, cls)
+  if (S.stats.tx) {
+    row('发送', `${kbps(S.stats.tx.bytesSent)} · ${S.stats.tx.w}x${S.stats.tx.h} @${S.stats.tx.fps}fps`, 'ok')
+    row('qualityLimitation', String(S.stats.tx.qualityLimitation ?? '—'), S.stats.tx.qualityLimitation === 'cpu' ? 'warn' : '')
+    row('nack / pli', `${S.stats.tx.nack ?? '—'} / ${S.stats.tx.pli ?? '—'}`)
+  }
+  if (S.stats.rx) {
+    row('接收', `${kbps(S.stats.rx.bytesReceived)} · 已解码 ${S.stats.rx.framesDecoded} 帧 @${S.stats.rx.fps}fps`, 'ok')
+    row('丢包 / 丢帧', `${S.stats.rx.packetsLost ?? '—'} / ${S.stats.rx.framesDropped ?? '—'}`,
+        (S.stats.rx.packetsLost || 0) > 0 ? 'warn' : '')
+  }
+  if (S.stats.pair) {
+    row('候选对', `${S.stats.pair.local}  ←→  ${S.stats.pair.remote}`)
+    row('RTT', S.stats.pair.rttMs + ' ms')
+  }
+  row('Codec', S.stats.codec ? S.stats.codec.mime : '—')
+  row('DataChannel', `${S.stats.dc.state} · 收 ${S.stats.dc.rx} / 发 ${S.stats.dc.tx}`)
+  const vid = $('#vid')
+  if (vid.videoWidth) row('video 元素', `${vid.videoWidth}x${vid.videoHeight}`, 'ok')
+}, 1000)
+
+// ---------- 报告 ----------
+window.__buildReport = () => ({
+  role, url: location.href, at: new Date().toISOString(),
+  probe: S.probe, audio: S.audio, stats: S.stats, timeline: S.timeline,
+})
+window.__pcState = () => (pc ? {
+  connectionState: pc.connectionState, iceConnectionState: pc.iceConnectionState,
+  iceGatheringState: pc.iceGatheringState, signalingState: pc.signalingState,
+} : null)
+window.__stats = () => S.stats
+$('#copy').onclick = async () => {
+  const text = JSON.stringify(window.__buildReport(), null, 2)
+  try { await navigator.clipboard.writeText(text); set('#copied', '已复制 ✓', 'ok') }
+  catch { console.log(text); window.prompt('手动复制：', text) }
+}
+addEventListener('pagehide', () => ws.close())
+</script>
+</body>
+</html>
