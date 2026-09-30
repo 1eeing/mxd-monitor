@@ -97,17 +97,29 @@ export class Cdp {
 
 /** 一个页面：负责 attach、导航、求值、收集 console 错误 */
 export class Page {
-  constructor(cdp, sessionId, label) {
+  constructor(cdp, sessionId, label, targetId) {
     this.cdp = cdp
     this.sessionId = sessionId
     this.label = label
+    this.targetId = targetId
     this.errors = []
+  }
+
+  /** 关掉这个标签页。同一场景需要换一批干净标签时用（比如重新走一遍建连） */
+  async close() {
+    if (!this.targetId) return
+    try {
+      await this.cdp.send('Target.closeTarget', { targetId: this.targetId })
+    } catch {
+      /* 已经关掉了 */
+    }
+    this.targetId = null
   }
 
   static async open(cdp, url, label, { beforeLoad } = {}) {
     const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' })
     const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
-    const page = new Page(cdp, sessionId, label)
+    const page = new Page(cdp, sessionId, label, targetId)
     cdp.on((msg) => {
       if (msg.sessionId !== sessionId) return
       if (msg.method === 'Runtime.consoleAPICalled' && msg.params?.type === 'error') {

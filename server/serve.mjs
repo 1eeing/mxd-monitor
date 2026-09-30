@@ -235,7 +235,10 @@ wss.on('connection', (ws, req) => {
           toPC({ t: 'answer', from: id, sdp: msg.sdp })
           break
         case 'ice':
-          if (msg.to === 'pc') toPC({ t: 'ice', from: id, candidate: msg.candidate })
+          // 不看 msg.to：手机只有一个可能的去处，就是 PC。
+          // 曾经要求 msg.to === 'pc'，而客户端压根没发这个字段，
+          // 于是手机的候选被静默丢弃，表现为「已连接但收不到任何包」。
+          toPC({ t: 'ice', from: id, candidate: msg.candidate })
           break
         default:
           break

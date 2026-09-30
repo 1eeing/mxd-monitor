@@ -115,6 +115,38 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
+  /* 播放按钮要浮在画面右上角，wrap 得是定位上下文 */
+  position: relative;
+}
+
+/* 播放/暂停开关。半透明常驻，播放中才明显——自动播放不可靠时用户有个兜底出口 */
+.p-video-toggle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  line-height: 1;
+  color: #fff;
+  /* 半透明黑底：任何画面上都读得清，又不挡住游戏窗口 */
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+}
+
+.p-video-toggle.on {
+  /* 正在播放时降到很淡，不长期遮挡画面 */
+  opacity: 0.35;
+}
+
+.p-video-toggle.on:active {
+  opacity: 1;
 }
 
 .p-video {
@@ -192,6 +224,40 @@ body,
   font-size: 12px;
   color: var(--text-dim);
   line-height: 1.5;
+}
+
+/* ---------- 诊断 ---------- */
+.p-diag {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.p-diag summary {
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.p-diag-actions {
+  display: flex;
+  gap: 12px;
+  margin: 8px 0;
+}
+
+.p-diag-text {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  /* 诊断文本要能整块选中复制，长数字串不换行会撑破布局 */
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 /* ---------- 错误 ---------- */

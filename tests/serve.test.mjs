@@ -209,6 +209,13 @@ async function testSignaling() {
   ok('ice 手机->PC', iceToPc !== null)
   ok('ice 的 from 同样由服务端裁定', iceToPc?.from === pid, `from=${iceToPc?.from}`)
 
+  // 手机方向不依赖 msg.to。真机故障就出在这里：服务端曾要求 msg.to === 'pc'，
+  // 而客户端没发这个字段，候选被静默丢弃（症状：ICE 停在 new、0 收包）。
+  // 上面那条 ice 只为验证转发链路，不代表客户端可以依赖它，所以再补一条不带 to 的。
+  ph1.ws.send(JSON.stringify({ t: 'ice', candidate: { candidate: 'c-phone-no-to' } }))
+  const iceNoTo = await pc.next((m) => m.t === 'ice' && m.candidate?.candidate === 'c-phone-no-to')
+  ok('手机 ice 即使不带 to 也会转发给 PC', iceNoTo !== null, JSON.stringify(iceNoTo))
+
   // 第二台手机，验证定向不会串台
   const ph2 = makeClient('role=phone')
   await ph2.opened

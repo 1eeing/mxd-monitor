@@ -20,6 +20,44 @@ export interface PhoneLink {
   /** 收到的远端视频流 */
   stream: MediaStream | null
   error: string | null
+  /**
+   * 抓一份可读诊断。只涵盖 PeerConnection 侧；<video> 元素的状态由 PhoneApp
+   * 读后合并，因为元素归它持有，不该把 DOM 引用传进 hook。
+   */
+  getDiagnostics: () => Promise<PhoneDiag>
+}
+
+/**
+ * 诊断快照。刻意做成能直接回答「ICE 到底卡在哪」：
+ *
+ * 真机症状是 ice=checking / 0 收包，可能是
+ *   a) 本端压根没发出候选（gathering 没完成）
+ *   b) 发出去的是 .local，Safari 解析不了对方（mDNS 互操作问题）
+ *   c) 候选正常但收不到对方的包（UDP 被拦/防火墙）
+ * 这三种只有靠「本地候选 + 远端候选 + 每个候选对的 state」才能区分开，
+ * 所以 stats 里非 succeeded 的候选对也要一并列出来。
+ */
+export interface PhoneDiag {
+  signaling: boolean
+  peerReady: boolean
+  hasStream: boolean
+  connectionState: string
+  iceConnectionState: string
+  iceGatheringState: string
+  signalingState: string
+  /** 本端发出的候选。地址是 .local 就说明被 mDNS 混淆了。 */
+  localCandidates: string[]
+  /** 收到的对方候选 */
+  remoteCandidates: string[]
+  /** 每个被尝试过的候选对及结果，failed 的也列出来 */
+  candidatePairs: string[]
+  /** 协商出的编解码器；null 表示还没协商出视频方向 */
+  decoder: string | null
+  /** 收包统计：bytesReceived 为 0 说明媒体根本没到，不是解码问题 */
+  bytesReceived: number
+  packetsReceived: number
+  framesDecoded: number
+  packetsLost: number
 }
 
 export interface PhoneState {
@@ -81,8 +119,12 @@ export function usePhone(onMessage: (msg: LanMessage) => void): PhoneLink {
     if (existing) return existing
     const pc = new RTCPeerConnection({ iceServers: [] })
     pcRef.current = pc
+    // 这里绝不能清 pendingIceRef：PC 的 candidate 很可能先于 offer 到达
+    // （offer 是 setLocalDescription 完成后才发的，onicecandidate 与它是并发的）。
+    // 那些先到的候选就缓存在这里，等 offer 走完 setRemoteDescription 再补进去。
+    // 清掉的话手机会一个对方候选都没有，ICE 停在 new，一个包也收不到。
+    // 需要丢弃上一轮残留时由 teardownPeer 负责，它在连接拆除时才清。
     remoteSetRef.current = false
-    pendingIceRef.current = []
 
     pc.ontrack = (e) => {
       const s = e.streams[0] ?? new MediaStream([e.track])
@@ -97,7 +139,10 @@ export function usePhone(onMessage: (msg: LanMessage) => void): PhoneLink {
       e.track.addEventListener('ended', dropIfEmpty)
     }
     pc.onicecandidate = (e) => {
-      if (e.candidate) sendWs({ t: 'ice', from: idRef.current, candidate: e.candidate.toJSON() })
+      // to:'pc' 显式写出来，不靠隐式约定。服务端现在无条件转发手机的 ice
+      // （它只认 role，不采信客户端自报字段），这个字段当前是冗余的；
+      // 但留着能让意图自明，也防止将来路由收紧时又静默丢候选。
+      if (e.candidate) sendWs({ t: 'ice', to: 'pc', candidate: e.candidate.toJSON() })
     }
     pc.ondatachannel = (e) => {
       const ch = e.channel
@@ -244,5 +289,72 @@ export function usePhone(onMessage: (msg: LanMessage) => void): PhoneLink {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [openSignaling])
 
-  return { signaling, peerReady, stream, error }
+  /**
+   * 抓诊断快照。getStats 里 inbound-rtp 的 bytesReceived 是关键分水岭：
+   * 为 0 说明媒体包压根没到（ICE/协商问题）；不为 0 但 framesDecoded 为 0
+   * 才是解码问题；framesDecoded 在涨就是渲染/自动播放问题。
+   */
+  const getDiagnostics = useCallback(async (): Promise<PhoneDiag> => {
+    const pc = pcRef.current
+    const base: PhoneDiag = {
+      signaling: wsRef.current?.readyState === WebSocket.OPEN,
+      peerReady: channelRef.current?.readyState === 'open',
+      hasStream: !!pc,
+      connectionState: pc?.connectionState ?? 'none',
+      iceConnectionState: pc?.iceConnectionState ?? 'none',
+      iceGatheringState: pc?.iceGatheringState ?? 'none',
+      signalingState: pc?.signalingState ?? 'none',
+      localCandidates: [],
+      remoteCandidates: [],
+      candidatePairs: [],
+      decoder: null,
+      bytesReceived: 0,
+      packetsReceived: 0,
+      framesDecoded: 0,
+      packetsLost: 0,
+    }
+    if (!pc) return base
+
+    try {
+      const stats = await pc.getStats()
+      // 先把 candidate 收集成 id -> 可读地址的表，候选对才能翻译成「地址对地址」
+      const byId = new Map<string, string>()
+      stats.forEach((r) => {
+        if (r.type === 'local-candidate') {
+          byId.set(r.id, `${r.candidateType} ${r.address}:${r.port} ${r.protocol ?? ''}`.trim())
+          base.localCandidates.push(byId.get(r.id)!)
+        } else if (r.type === 'remote-candidate') {
+          byId.set(r.id, `${r.candidateType} ${r.address}:${r.port} ${r.protocol ?? ''}`.trim())
+          base.remoteCandidates.push(byId.get(r.id)!)
+        }
+      })
+      stats.forEach((r) => {
+        if (r.type === 'inbound-rtp' && r.kind === 'video') {
+          base.bytesReceived += r.bytesReceived ?? 0
+          base.packetsReceived += r.packetsReceived ?? 0
+          base.framesDecoded += r.framesDecoded ?? 0
+          base.packetsLost += r.packetsLost ?? 0
+        }
+        if (r.type === 'codec' && r.id === r.inboundId) base.decoder = r.mimeType ?? null
+        if (r.type === 'candidate-pair') {
+          // failed / waiting 的也列出来：ICE 卡住时「试过哪些地址、为什么没成」
+          // 才是关键信息，只报 succeeded 等于什么也没说
+          const l = byId.get(r.localCandidateId) ?? r.localCandidateId ?? '?'
+          const rr = byId.get(r.remoteCandidateId) ?? r.remoteCandidateId ?? '?'
+          base.candidatePairs.push(`${r.state ?? '?'}${r.nominated ? ' (已选中)' : ''} [${l}] -> [${rr}]`)
+        }
+      })
+      // 旧版/部分实现里 codec 不带 inboundId，退而求其次找实际用上的解码器
+      if (!base.decoder) {
+        stats.forEach((r) => {
+          if (r.type === 'codec' && r.mimeType?.startsWith('video')) base.decoder = r.mimeType
+        })
+      }
+    } catch (err) {
+      base.connectionState = `getStats 失败: ${err instanceof Error ? err.message : String(err)}`
+    }
+    return base
+  }, [])
+
+  return { signaling, peerReady, stream, error, getDiagnostics }
 }

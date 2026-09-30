@@ -4,9 +4,10 @@
  * 拓扑：PC 永远是 offerer，手机只收视频轨，所以不存在 offer 冲突（glare），
  * 不需要实现完整协商（perfect negotiation）那套「双方都能发起」的逻辑。
  *
- * 不配 iceServers：同局域网靠 host candidate 直连就够了。Chrome 会把 host candidate
- * 用 mDNS 打成 xxx.local，实测 Windows/Chrome 与 iOS/Safari 之间能正常解析。
- * 挂公网 STUN 反而多一层外部依赖和不必要的隐私暴露，跨网本来也不是这个功能的目标。
+ * 不配 iceServers：同局域网靠 host candidate 直连就够了。挂公网 STUN 会
+ * 多一层外部依赖和不必要的隐私暴露，跨网本来也不是这个功能的目标。
+ *
+ * 首次协商只带 DataChannel，视频轨等连接建立后再挂——原因见 createPeer 里的注释。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { alarmPlayer } from '../audio/player'
@@ -74,6 +75,8 @@ interface PhonePeer {
   /** remoteDescription 还没设好时先缓存 ICE，否则早期 candidate 会被丢掉 */
   pendingIce: RTCIceCandidateInit[]
   negotiating: boolean
+  /** 协商进行中又来了 negotiationneeded：记下来，等这轮结束再补一次 */
+  renegotiateQueued: boolean
 }
 
 export function useLanMirror(input: LanMirrorInput): UseLanMirror {
@@ -129,9 +132,17 @@ export function useLanMirror(input: LanMirrorInput): UseLanMirror {
     setPhoneCount(peersRef.current.size)
   }, [])
 
-  /** 把采集流挂到连接上（幂等）。addTrack 会触发 onnegotiationneeded 去发 offer */
+  /**
+   * 把采集流挂到连接上（幂等）。addTrack 会触发 onnegotiationneeded 去发 offer。
+   *
+   * 只在 DataChannel 已 open 时才挂：也就是 ICE + DTLS 确实通了之后。
+   * 这样不管接入顺序如何，首个 offer 都必然只有 DataChannel——
+   * iOS Safari 对「首个 offer 就带视频轨」的协商会让 ICE 永远停在 checking，
+   * 而 DataChannel open 必然意味着连接已建立，漏挂的情况由 channel.onopen 补。
+   */
   const attachTrack = useCallback((peer: PhonePeer, stream: MediaStream) => {
     if (peer.sender) return
+    if (peer.channel?.readyState !== 'open') return
     const track = stream.getVideoTracks()[0]
     if (!track) return
     const sender = peer.pc.addTrack(track, stream)
@@ -172,15 +183,31 @@ export function useLanMirror(input: LanMirrorInput): UseLanMirror {
   const createPeer = useCallback(
     (id: string) => {
       const pc = new RTCPeerConnection({ iceServers: [] })
-      const peer: PhonePeer = { id, pc, channel: null, sender: null, pendingIce: [], negotiating: false }
+      const peer: PhonePeer = {
+        id,
+        pc,
+        channel: null,
+        sender: null,
+        pendingIce: [],
+        negotiating: false,
+        renegotiateQueued: false,
+      }
       peersRef.current.set(id, peer)
       setPhoneCount(peersRef.current.size)
 
-      pc.onicecandidate = (e) => {
-        if (e.candidate) sendWs({ t: 'ice', to: id, candidate: e.candidate.toJSON() })
-      }
-      pc.onnegotiationneeded = () => {
-        if (peer.negotiating) return
+      /**
+       * 发一次 offer。
+       *
+       * 协商期间到来的 negotiationneeded 不能直接丢：addTrack 只要发生在
+       * setLocalDescription 未完成时，那个事件就被吞掉且不会再补发，
+       * 结果是视频轨永远协商不上（表现为手机端「已连接但没画面」）。
+       * 所以记一个标记，这轮结束后补跑一次。
+       */
+      function negotiate(): void {
+        if (peer.negotiating) {
+          peer.renegotiateQueued = true
+          return
+        }
         peer.negotiating = true
         void pc
           .setLocalDescription()
@@ -192,8 +219,17 @@ export function useLanMirror(input: LanMirrorInput): UseLanMirror {
           })
           .finally(() => {
             peer.negotiating = false
+            if (peer.renegotiateQueued) {
+              peer.renegotiateQueued = false
+              negotiate()
+            }
           })
       }
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) sendWs({ t: 'ice', to: id, candidate: e.candidate.toJSON() })
+      }
+      pc.onnegotiationneeded = negotiate
       pc.onconnectionstatechange = () => {
         // failed 基本等于对端走了（手机锁屏杀页面、断网）；closed 是我们自己 close 的
         if (pc.connectionState === 'failed' || pc.connectionState === 'closed') dropPeer(id)
@@ -205,6 +241,8 @@ export function useLanMirror(input: LanMirrorInput): UseLanMirror {
         setError(null)
         // 补发全量状态：手机可能在监控已在报警时才连上
         if (syncRef.current) channel.send(JSON.stringify(syncRef.current))
+        // 视频轨在连接建立之后才挂（见下方注释），这里是补挂的时机
+        ensureTrack()
       }
       channel.onclose = () => {
         // 通道关了就不算连上了（iOS 回收页面时通道会静默关闭）。
@@ -213,12 +251,20 @@ export function useLanMirror(input: LanMirrorInput): UseLanMirror {
         dropPeer(id)
       }
 
-      // 建连时监控已经在跑的话，立刻把视频挂上
-      const stream = streamRef.current
-      if (stream) attachTrack(peer, stream)
+      // 刻意不在这里挂视频轨。
+      //
+      // 真机（iOS Safari）实测：首次 offer 里就带视频轨时，ICE 永远停在
+      // checking、一个包都收不到；首次 offer 只带 DataChannel 则完全正常。
+      // 两种接入顺序因此走的是不同的首次协商内容：
+      //   手机先连、PC 后开始监控 -> 首轮无视频，ICE 通 -> 补轨重协商 -> 有画面
+      //   PC 先共享、手机后连     -> 首轮带视频，ICE 卡死（就是用户遇到的）
+      // 根因在浏览器侧（Safari 对首轮含视频轨的协商疑似有特殊处理），
+      // 但不必赌它——让两条顺序强制走同一条已被真机验证过的路径即可。
+      // 代价只是画面晚一次重协商到达（几十毫秒），换来行为与顺序无关。
+      // 视频轨改在 channel.onopen（ICE + DTLS 都已建立）后由 ensureTrack 挂上。
       return peer
     },
-    [attachTrack, dropPeer, sendWs],
+    [dropPeer, ensureTrack, sendWs],
   )
 
   const closeAll = useCallback(() => {
