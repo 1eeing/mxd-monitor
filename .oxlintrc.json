@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["react", "oxc"],
-  "ignorePatterns": ["src/vendor/**", "public/**", "dist/**", "spike/**"],
+  "ignorePatterns": ["src/vendor/**", "public/**", "dist/**"],
   "rules": {
     "react/rules-of-hooks": "error",
     "react/only-export-components": ["warn", { "allowConstantExport": true }]

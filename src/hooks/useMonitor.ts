@@ -69,6 +69,11 @@ export interface UseMonitor {
   /** 初始化阶段的资源加载进度 0~100；非初始化状态为 null */
   loadProgress: number | null
   videoRef: React.RefObject<HTMLVideoElement | null>
+  /**
+   * 原始采集流。局域网镜像（useLanMirror）需要它把视频轨直接转发给手机，
+   * 这里只做透传，不参与 OCR 循环。
+   */
+  streamRef: React.MutableRefObject<MediaStream | null>
   start: () => Promise<void>
   stop: () => void
   manuallyStopAlarm: () => void
@@ -485,6 +490,7 @@ export function useMonitor(settings: AppSettings): UseMonitor {
     screenError: screen.error,
     loadProgress,
     videoRef,
+    streamRef: screen.streamRef,
     start,
     stop,
     manuallyStopAlarm,

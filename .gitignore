@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# 局域网镜像服务的运行时数据（PC 同步过来的报警音频中转缓存）
+.lan-runtime
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -28,3 +31,5 @@ dist-ssr
 .edgeone/*
 .tef_dist/*
   
+# 打包产物（npm run pack 生成，不入库）
+release

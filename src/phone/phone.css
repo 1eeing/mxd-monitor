@@ -1,0 +1,254 @@
+/* 手机端样式。独立于 src/index.css：那是 PC 端布局，宽度、密度、交互目标都不同。 */
+
+:root {
+  --bg: #10141c;
+  --bg-card: #1b2130;
+  --border: #2c3547;
+  --text: #eef1f6;
+  --text-dim: #8b97ad;
+  --accent: #f2a93b;
+  --danger: #e5484d;
+  --ok: #35b35a;
+  font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', system-ui, sans-serif;
+  /* iOS 会给横竖屏切换加地址栏，默认行为会让内容在切换瞬间被裁 */
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.p-app {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 14px 14px calc(28px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ---------- 报警条 ---------- */
+/* 报警状态必须一眼可见：顶部整条 + 页面描边，静音或振动时也靠颜色分辨 */
+.p-alarm-bar {
+  background: var(--danger);
+  color: #fff;
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: p-pulse 1s ease-in-out infinite;
+}
+
+@keyframes p-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+/* 锁屏/后台时动画会停，颜色仍是可靠的信号 */
+.p-alarm-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.p-alarm-hits {
+  font-size: 14px;
+  opacity: 0.95;
+}
+
+.p-app.ringing {
+  box-shadow: inset 0 0 0 3px var(--danger);
+}
+
+/* ---------- 状态 ---------- */
+.p-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.p-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.p-dot.on {
+  background: var(--ok);
+}
+
+.p-dot.off {
+  background: var(--text-dim);
+}
+
+.p-status-text {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ---------- 视频 ---------- */
+.p-video-wrap {
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  /* 4:3 是游戏窗口的常见比例，给个固定高度避免视频到达时页面高度乱跳 */
+  aspect-ratio: 4 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.p-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.p-video-placeholder {
+  color: var(--text-dim);
+  font-size: 14px;
+  text-align: center;
+  padding: 20px;
+}
+
+/* ---------- 命中 ---------- */
+.p-hits {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.p-hit {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.p-hit-label {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.p-hit-snippet {
+  font-size: 13px;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+/* ---------- 音频解锁 ---------- */
+.p-audio-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 触达目标按 iOS 建议做到 44px 以上 */
+.p-unlock {
+  width: 100%;
+  padding: 15px 16px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #1a1206;
+  background: var(--accent);
+  border: 1px solid #d8941f;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.p-unlock.small {
+  padding: 11px 14px;
+  font-size: 15px;
+}
+
+.p-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* ---------- 错误 ---------- */
+.p-error {
+  background: rgba(229, 72, 77, 0.14);
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.p-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.p-error-line {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+/* ---------- OCR 调试 ---------- */
+.p-ocr {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.p-ocr summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.p-ocr div {
+  margin-top: 7px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.p-foot {
+  display: flex;
+  justify-content: center;
+}
+
+.p-link {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 8px;
+}

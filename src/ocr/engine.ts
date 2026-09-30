@@ -27,20 +27,30 @@ export interface InitResult {
 }
 
 /**
- * WASM 运行时来源：
- * - WebGPU(jsep)：onnxruntime-web 的 jsep.wasm 有 28MB，超过 EdgeOne Makers 免费版单文件
- *   25MB 上限，改用 npmmirror（国内可达的 npm 镜像 CDN）按固定版本加载；
- * - CPU(wasm)：ort-wasm-simd-threaded.wasm 只有 14MB，由 /onnx/ 本地托管，离线可用。
- * wasmPaths 为目录前缀，ort 会按需拉取对应的 .mjs 加载器与 .wasm 二进制。
+ * WASM 运行时来源（两个后端都指向本地 /onnx/）：
+ *
+ * ⚠ onnxruntime-web 主入口 ort.mjs 把 wasmModuleFilename 硬编码为
+ * `ort-wasm-simd-threaded.jsep.mjs`（JSEP 构建），所以**即使
+ * executionProviders 传 ['wasm']，它请求的仍然是 .jsep.* 这两个文件**，
+ * 并不会自动改用体积更小的非 jsep 版本。曾经这里给 wasm 后端配了非 jsep 路径，
+ * 结果 CPU 回退 100% 报「no available backend found」——WASM 回退等于完全不可用。
+ * 现在两个后端统一走 /onnx/，文件由 scripts/strip-ort-assets.mjs 从
+ * node_modules/onnxruntime-web/dist 同步过来，版本不会和 package.json 脱节。
+ *
+ * 注意：jsep.wasm 有 27MB，单文件超过 EdgeOne Makers 免费版 25MB 上限，
+ * 所以 dist/assets/ 里 vite 自动打进去的那份必须删掉（同一脚本负责），
+ * 改成走 public/onnx/ 由构建脚本拷贝——部署时它同样是独立静态文件。
  */
 const WASM_PATHS: Record<OcrBackend, string> = {
-  webgpu: 'https://registry.npmmirror.com/onnxruntime-web/1.30.0/files/dist/',
+  webgpu: '/onnx/',
   wasm: '/onnx/',
 }
 
 /** 各资源的大致字节数，用于计算加载进度（约数即可，进度条不需要精确） */
 const RESOURCE_BYTES: Record<string, number> = {
+  'ort-wasm-simd-threaded.jsep.mjs': 40_000,
   'ort-wasm-simd-threaded.jsep.wasm': 28_312_028,
+  'ort-wasm-simd-threaded.mjs': 20_000,
   'ort-wasm-simd-threaded.wasm': 14_239_897,
   'ch_PP-OCRv4_det_infer.onnx': 4_745_517,
   'ch_PP-OCRv4_rec_infer.onnx': 10_822_323,
@@ -52,11 +62,15 @@ const RESOURCE_BYTES: Record<string, number> = {
  * 折算成 0~100 的进度回调。onnxruntime 与 OCR 库内部都走全局 fetch，拦得住。
  * 初始化完成后必须调用返回的还原函数。
  */
-function trackDownloadProgress(backend: OcrBackend, onProgress: (pct: number) => void): () => void {
-  const bigFiles =
-    backend === 'webgpu'
-      ? ['ort-wasm-simd-threaded.jsep.wasm', 'ch_PP-OCRv4_det_infer.onnx', 'ch_PP-OCRv4_rec_infer.onnx', 'ppocr_keys_v1.txt']
-      : ['ort-wasm-simd-threaded.wasm', 'ch_PP-OCRv4_det_infer.onnx', 'ch_PP-OCRv4_rec_infer.onnx', 'ppocr_keys_v1.txt']
+function trackDownloadProgress(onProgress: (pct: number) => void): () => void {
+  // 两个后端都拉 JSEP 运行时（见 WASM_PATHS 上方注释）
+  const bigFiles = [
+    'ort-wasm-simd-threaded.jsep.mjs',
+    'ort-wasm-simd-threaded.jsep.wasm',
+    'ch_PP-OCRv4_det_infer.onnx',
+    'ch_PP-OCRv4_rec_infer.onnx',
+    'ppocr_keys_v1.txt',
+  ]
   const total = bigFiles.reduce((sum, name) => sum + (RESOURCE_BYTES[name] ?? 0), 0)
   const loaded = new Map<string, number>()
 
@@ -121,7 +135,7 @@ export async function initOcr(
   }
 
   const started = performance.now()
-  const restoreFetch = onProgress ? trackDownloadProgress(backend, onProgress) : null
+  const restoreFetch = onProgress ? trackDownloadProgress(onProgress) : null
   try {
     ocr = await Ocr.create({ models: OCR_MODELS, onnxOptions })
   } finally {

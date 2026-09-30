@@ -26,6 +26,15 @@ export class AlarmPlayer {
   }
 
   /**
+   * 当前报警音源地址（blob: 或默认音频路径）。
+   * 局域网镜像要把同一份音频送到手机出响，读这里可避免在别处重复实现
+   * 「自定义音频走 IndexedDB、否则用默认音频」这套选择逻辑。
+   */
+  get source(): string {
+    return this.currentSrc
+  }
+
+  /**
    * 开始循环播放。返回的 Promise 在播放失败时 reject（如浏览器自动播放策略拦截、
    * 音频设备被占用），调用方应据此记录日志——静默失败会让「命中了却没声音」无从排查。
    */

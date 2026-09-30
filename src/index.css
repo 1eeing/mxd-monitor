@@ -777,6 +777,113 @@ textarea:focus {
   cursor: pointer;
 }
 
+/* ---------- 头部操作区 ---------- */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.header-badge {
+  background: var(--ok);
+  color: #fff;
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+}
+
+/* ---------- 局域网镜像弹窗 ---------- */
+.lan-modal {
+  max-width: 420px;
+  align-items: center;
+}
+
+.lan-title {
+  margin: 0;
+  font-size: 18px;
+  align-self: flex-start;
+}
+
+.lan-qr-wrap {
+  background: #fff;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  line-height: 0;
+}
+
+.lan-qr {
+  width: 232px;
+  height: 232px;
+  color: #111;
+  display: block;
+}
+
+.lan-url {
+  font-size: 12px;
+  color: var(--text-dim);
+  word-break: break-all;
+  text-align: center;
+  font-family: Consolas, monospace;
+}
+
+.lan-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  width: 100%;
+}
+
+.lan-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.lan-dot.on {
+  background: var(--ok);
+}
+
+.lan-dot.off {
+  background: var(--text-dim);
+}
+
+.lan-warn {
+  background: #fdf3e2;
+  border: 1px solid var(--accent);
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #6b4a06;
+  width: 100%;
+}
+
+.lan-error {
+  background: #fdecec;
+  border: 1px solid var(--danger);
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #8a1f22;
+  width: 100%;
+}
+
+.lan-modal .hint {
+  width: 100%;
+}
+
 @media (max-width: 720px) {
   .app {
     padding: 12px;

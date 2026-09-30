@@ -1,4 +1,5 @@
 import { fileURLToPath, URL } from 'node:url'
+import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import type { Connect, Plugin } from 'vite'
 import { defineConfig } from 'vite'
@@ -42,8 +43,21 @@ function servePublicOnnxInDev(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
+  // 两个入口：PC 端 index.html 与手机端 phone.html。
+  // input 的 key 用文件名本身，产物就是 dist/index.html 和 dist/phone.html。
+  // 手机端不碰 OCR/onnxruntime，产物很小，天然和主包分开。
   plugins: [react(), crossOriginIsolation(), servePublicOnnxInDev()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(import.meta.dirname, 'index.html'),
+        phone: resolve(import.meta.dirname, 'phone.html'),
+      },
+    },
+  },
   server: {
+    // dev 时手机要用局域网 IP 访问，默认只监听 localhost 会连不上
+    host: true,
     watch: {
       // 静态资源（音频/模型/onnx）不需要 HMR 监听：
       // 1) 文件大且固定，没有改它的场景；

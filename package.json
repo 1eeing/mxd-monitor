@@ -8,14 +8,22 @@
     "build": "tsc -b && vite build && node scripts/strip-ort-assets.mjs",
     "typecheck": "tsc -b",
     "lint": "oxlint",
+    "test": "npm run test:qr && npm run test:serve && npm run test:browser && npm run test:video && npm run test:release",
+    "test:qr": "node tests/qr.test.ts",
+    "test:serve": "node tests/serve.test.mjs",
+    "test:browser": "node tests/browser.test.mjs",
+    "test:video": "node tests/video.test.mjs",
+    "test:release": "node tests/release.test.mjs",
     "preview": "vite preview",
+    "lan": "node server/serve.mjs",
+    "pack": "node scripts/pack.mjs",
+    "release": "npm run build && npm run pack && node tests/release.test.mjs",
     "version:fix": "npm version patch",
-    "version:feat": "npm version minor",
-    "spike": "node spike/server.mjs",
-    "spike:coi": "node spike/server.mjs --coi"
+    "version:feat": "npm version minor"
   },
   "dependencies": {
     "@gutenye/ocr-browser": "^1.4.9",
+    "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
