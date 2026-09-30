@@ -192,18 +192,40 @@ export function useMonitor(settings: AppSettings): UseMonitor {
     screenStopRef.current = screen.stop
   })
 
-  /** 把报警音源设为自定义音频或默认鸡叫 */
+  /**
+   * 把报警音源设为自定义音频或默认鸡叫。
+   *
+   * 刻意**不让它抛错**。它被 start() await，一旦音频侧出问题（IndexedDB 不可用、
+   * 读取失败、Blob 已丢失），异常会落进 start 的 catch，而那里的第一件事就是
+   * screen.stop()——用户刚授权的屏幕共享被直接停掉，界面显示「启动失败」。
+   * 更糟的是 useCustomAudio 是持久化设置：只要它坏着，之后每次启动都会重犯，
+   * 刷新也一样，于是「上传音频之后怎么都打不开监控」，而报错还指向 IndexedDB，
+   * 与用户选的那个音频文件毫无关系。
+   *
+   * 报警音只是提示，坏了就退回默认音并留日志，绝不能挡住监控。
+   */
   const applyAlarmSource = useCallback(async () => {
     const s = settingsRef.current
     if (s.useCustomAudio && s.customAudioName) {
-      const blob = await getFile(CUSTOM_ALARM_AUDIO_KEY)
-      if (blob) {
-        alarmPlayer.setSource(URL.createObjectURL(blob))
-        return
+      try {
+        const blob = await getFile(CUSTOM_ALARM_AUDIO_KEY)
+        if (blob) {
+          alarmPlayer.setSource(URL.createObjectURL(blob))
+          return
+        }
+        addLog(
+          'error',
+          `自定义音频「${s.customAudioName}」读不到（浏览器存储被清理或曾写入失败），本次报警改用默认音频`,
+        )
+      } catch (err) {
+        addLog(
+          'error',
+          `读取自定义音频失败：${err instanceof Error ? err.message : String(err)}。本次报警改用默认音频`,
+        )
       }
     }
     alarmPlayer.setSource(DEFAULT_ALARM_AUDIO)
-  }, [])
+  }, [addLog])
 
   const tick = useCallback(async () => {
     if (busyRef.current) return
@@ -418,6 +440,22 @@ export function useMonitor(settings: AppSettings): UseMonitor {
     missStreakRef.current = 0
     addLog('info', '手动停止报警（关键字条件解除前不再自动报警）')
   }, [addLog, setAlarm])
+
+  /**
+   * 报警音源随设置即时生效。
+   *
+   * 之前 refreshAlarmSource 只是挂在返回值上、**从来没有调用点**，音源只在
+   * start() 里设置一次。后果是：监控正在跑的时候上传或切换自定义音频完全没有反应，
+   * 必须「停止监控 → 重新开始」才换源，用户只会以为上传失败了。
+   *
+   * 放在 effect 里而不是上传回调里直接调，是为了避开 settingsRef 的时序：
+   * update() 只是排队了一次 setState，此刻 settingsRef.current 还是旧值，
+   * 同步调用会拿旧设置去设源。
+   */
+  useEffect(() => {
+    if (statusRef.current !== 'running') return
+    void applyAlarmSource()
+  }, [settings.useCustomAudio, settings.customAudioName, applyAlarmSource])
 
   /**
    * 识别循环的心跳改由 Worker 驱动（见 hooks/useWorkerTicker）。

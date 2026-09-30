@@ -51,3 +51,44 @@ export class AlarmPlayer {
 }
 
 export const alarmPlayer = new AlarmPlayer()
+
+/**
+ * 试解码一个音频 Blob，判断当前浏览器到底能不能播它。
+ *
+ * 必须在**存库之前**问一遍，原因是 Chrome 对无法解码的文件既不抛异常也不 reject
+ * promise，只是触发 audio.onerror（实测 code=4 SRC_NOT_SUPPORTED）。放任不管的话，
+ * 用户挑了个坏文件或浏览器不支持的编码，界面照样显示「已上传 xxx.ogg」并选中它，
+ * 直到某次真报警时才哑掉——那时已经没有任何线索指回当初选错了文件。
+ */
+export function probePlayable(blob: Blob, timeoutMs = 5000): Promise<{ ok: boolean; reason: string }> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob)
+    const audio = new Audio()
+    let settled = false
+    const finish = (ok: boolean, reason: string): void => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      audio.oncanplay = null
+      audio.onerror = null
+      audio.removeAttribute('src')
+      audio.load()
+      URL.revokeObjectURL(url)
+      resolve({ ok, reason })
+    }
+    const timer = window.setTimeout(
+      () => finish(false, '解码超时，文件可能已损坏或体积过大'),
+      timeoutMs,
+    )
+    audio.preload = 'metadata'
+    audio.oncanplay = () => finish(true, '')
+    audio.onerror = () => {
+      const code = audio.error?.code
+      // MediaError：1 ABORTED / 2 NETWORK / 3 DECODE / 4 SRC_NOT_SUPPORTED
+      const meaning =
+        code === 4 ? '浏览器不支持该音频的编码格式' : code === 3 ? '音频文件已损坏' : '音频无法解码'
+      finish(false, `${meaning}（MediaError ${code ?? '未知'}）`)
+    }
+    audio.src = url
+  })
+}

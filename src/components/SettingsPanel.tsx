@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { AppSettings, KeywordRule, MatchedKeyword } from '../types'
 import { CUSTOM_ALARM_AUDIO_KEY, DEFAULT_ALARM_AUDIO } from '../config'
 import { putFile, deleteFile, getFile } from '../utils/blobStore'
+import { probePlayable } from '../audio/player'
 import { findKeywordMatches } from '../utils/match'
 import type { OcrTextLine } from '../utils/match'
 
@@ -46,6 +47,9 @@ export function SettingsPanel({ settings, onChange, onStartCropSelect }: Setting
 
   // ---------- 报警音频 ----------
   const [testingAudio, setTestingAudio] = useState(false)
+  const [savingAudio, setSavingAudio] = useState(false)
+  /** 报警音相关的问题（选不了文件 / 存不进去 / 播不了），就地显示而不是静默失败 */
+  const [audioError, setAudioError] = useState<string | null>(null)
   // 保存当前试听中的 audio 元素与 blob URL，以便随时暂停/停止
   const previewAudioRef = useRef<HTMLAudioElement | null>(null)
   const previewUrlRef = useRef('')
@@ -88,32 +92,97 @@ export function SettingsPanel({ settings, onChange, onStartCropSelect }: Setting
     audio.onerror = stopAudioTest
   }
 
+  /**
+   * 允许的扩展名。
+   *
+   * 不能只靠 accept="audio/*"：不少 ogg/opus 文件的 MIME 是 application/ogg 或空串
+   * （改过名、从某些站点下的），Chrome 的 audio/* 过滤器会直接把它们从选择器里隐藏，
+   * 用户看到的就是「打不开这个文件」。这里把扩展名显式列出来兜住。
+   */
+  const AUDIO_EXT = ['.mp3', '.ogg', '.oga', '.opus', '.wav', '.m4a', '.aac', '.flac', '.webm']
+
+  /** 报警音体积上限：只需要几秒声音，10MB 足够；超大文件写 IndexedDB 容易触发配额失败 */
+  const MAX_AUDIO_BYTES = 10 * 1024 * 1024
+
   const testCustomAudio = async (): Promise<void> => {
     if (testingAudio) {
       stopAudioTest()
       return
     }
-    const blob = await getFile(CUSTOM_ALARM_AUDIO_KEY)
-    if (!blob) return
-    const url = URL.createObjectURL(blob)
-    const audio = new Audio(url)
-    previewAudioRef.current = audio
-    previewUrlRef.current = url
-    setTestingAudio(true)
-    void audio.play().catch(stopAudioTest)
-    audio.onended = stopAudioTest
-    audio.onerror = stopAudioTest
+    setAudioError(null)
+    try {
+      const blob = await getFile(CUSTOM_ALARM_AUDIO_KEY)
+      if (!blob) {
+        setAudioError('找不到已保存的自定义音频，请重新上传')
+        return
+      }
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      previewAudioRef.current = audio
+      previewUrlRef.current = url
+      setTestingAudio(true)
+      // 之前这里只 stopAudioTest，把「为什么播不了」整个吞掉：
+      // 编码不支持、文件损坏、blob 丢失，用户看到的只有「按了没反应」。
+      audio.onended = stopAudioTest
+      audio.onerror = () => {
+        stopAudioTest()
+        setAudioError('这个音频无法播放：文件可能已损坏，或浏览器不支持其编码格式')
+      }
+      await audio.play()
+    } catch (err) {
+      stopAudioTest()
+      setAudioError(`试听失败：${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
-  const handleCustomAudioFile = async (file: File | undefined): Promise<void> => {
+  const handleCustomAudioFile = async (file: File | undefined, input: HTMLInputElement): Promise<void> => {
+    // 先清空 input.value：同一个文件重选时 change 事件不会触发，
+    // 用户「再选一次修复」会毫无反应，只能刷新页面。
+    input.value = ''
     if (!file) return
-    await putFile(CUSTOM_ALARM_AUDIO_KEY, file)
-    update({ useCustomAudio: true, customAudioName: file.name })
+
+    const lower = file.name.toLowerCase()
+    if (!AUDIO_EXT.some((ext) => lower.endsWith(ext))) {
+      setAudioError(`不支持的文件类型：${file.name}。请选择 ${AUDIO_EXT.join(' / ')}`)
+      return
+    }
+    if (file.size > MAX_AUDIO_BYTES) {
+      setAudioError(
+        `文件太大（${(file.size / 1024 / 1024).toFixed(1)}MB）。报警音只需要几秒，请压缩到 ${MAX_AUDIO_BYTES / 1024 / 1024}MB 以内`,
+      )
+      return
+    }
+
+    setSavingAudio(true)
+    setAudioError(null)
+    try {
+      // 存库之前先确认浏览器真能解码。Chrome 不会为无法解码的文件抛错，
+      // 只会触发 onerror——不预检的话，坏文件会被正常保存并选中，
+      // 直到某次报警才哑掉，那时已经查不出是哪个文件的问题了。
+      const probe = await probePlayable(file)
+      if (!probe.ok) {
+        setAudioError(`无法播放「${file.name}」：${probe.reason}。请换一个浏览器能直接播放的音频文件`)
+        return
+      }
+      await putFile(CUSTOM_ALARM_AUDIO_KEY, file)
+      update({ useCustomAudio: true, customAudioName: file.name })
+    } catch (err) {
+      // 之前整条链路是 void 调用的，putFile 失败（配额超限、隐私模式禁用 IndexedDB）
+      // 会变成一个没人接的 rejection：界面毫无反馈，用户只看到「点了没反应」。
+      setAudioError(`保存失败：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setSavingAudio(false)
+    }
   }
 
   const removeCustomAudio = async (): Promise<void> => {
     stopAudioTest()
-    await deleteFile(CUSTOM_ALARM_AUDIO_KEY)
+    setAudioError(null)
+    try {
+      await deleteFile(CUSTOM_ALARM_AUDIO_KEY)
+    } catch (err) {
+      setAudioError(`删除失败：${err instanceof Error ? err.message : String(err)}`)
+    }
     update({ useCustomAudio: false, customAudioName: '' })
   }
 
@@ -275,7 +344,11 @@ export function SettingsPanel({ settings, onChange, onStartCropSelect }: Setting
             type="radio"
             name="alarm-audio"
             checked={!settings.useCustomAudio}
-            onChange={() => update({ useCustomAudio: false, customAudioName: '' })}
+            onChange={() => {
+              setAudioError(null)
+              stopAudioTest()
+              update({ useCustomAudio: false, customAudioName: '' })
+            }}
           />
           使用默认音频（<code>{DEFAULT_ALARM_AUDIO}</code>）
           {!settings.useCustomAudio && (
@@ -290,19 +363,28 @@ export function SettingsPanel({ settings, onChange, onStartCropSelect }: Setting
             type="radio"
             name="alarm-audio"
             checked={settings.useCustomAudio}
-            onChange={() => update({ useCustomAudio: true, customAudioName: settings.customAudioName })}
+            onChange={() => {
+              setAudioError(null)
+              update({ useCustomAudio: true, customAudioName: settings.customAudioName })
+            }}
           />
           使用自定义音频
         </label>
 
         <div className="custom-audio">
           <label className="btn ghost small upload-btn">
-            上传自定义音频
+            {savingAudio ? '正在检查…' : '上传自定义音频'}
             <input
               type="file"
-              accept="audio/*"
+              /* 显式列出扩展名：只写 audio/* 时，MIME 为 application/ogg 或空的
+                 ogg/opus 文件会在选择器里被隐藏，用户反馈就是「打不开」 */
+              accept={`audio/*,${AUDIO_EXT.join(',')}`}
               style={{ display: 'none' }}
-              onChange={(e) => void handleCustomAudioFile(e.target.files?.[0])}
+              onChange={(e) => {
+                const input = e.target
+                const file = input.files?.[0]
+                void handleCustomAudioFile(file, input)
+              }}
             />
           </label>
           {customAudioExists && (
@@ -320,6 +402,8 @@ export function SettingsPanel({ settings, onChange, onStartCropSelect }: Setting
             <span className="hint">尚未上传自定义音频</span>
           )}
         </div>
+
+        {audioError && <p className="hint audio-error">{audioError}</p>}
 
         {testingAudio && (
           <p className="hint">正在播放…（再次点击「停止试听」可停止）</p>
