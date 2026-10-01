@@ -126,6 +126,12 @@ export function useMonitor(settings: AppSettings): UseMonitor {
   /** 报警是否正在响（与 alarmActive state 保持同步；停止判定以它为准，不受报警播放器内部状态影响） */
   const alarmActiveRef = useRef(false)
 
+  /**
+   * 监控是否处于活跃状态（同步更新，不受 React 渲染时序影响）。
+   * tick 中的 await 完成后必须检查此 ref，否则 stop() 后仍在途的 tick 会重新触发报警。
+   */
+  const monitorActiveRef = useRef(false)
+
   /** 黑屏检测：连续若干帧接近全黑时提示（常见原因是游戏独占全屏导致采集不到画面） */
   const blackFramesRef = useRef(0)
   const blackWarnedRef = useRef(false)
@@ -172,6 +178,7 @@ export function useMonitor(settings: AppSettings): UseMonitor {
   const handleStreamEnded = useCallback(() => {
     if (screenSelfStopRef.current) return
     if (statusRef.current !== 'running') return
+    monitorActiveRef.current = false
     alarmPlayer.stop()
     setAlarm(false)
     setHits([])
@@ -290,6 +297,9 @@ export function useMonitor(settings: AppSettings): UseMonitor {
       const result = await withTimeout(detectImageData(frame), OCR_TIMEOUT_MS)
       // 只有正常返回才允许下一帧继续识别
       detectInFlightRef.current = false
+      // await 期间监控可能被停止（用户点「停止监控」或浏览器原生「停止共享」），
+      // 此时不能再触发报警，否则 stop() 之后报警还会继续响
+      if (!monitorActiveRef.current) return
       lastOkAtRef.current = Date.now()
       const matched = findKeywordMatches(
         result.lines.map((line) => ({ text: line.text, score: line.score })),
@@ -380,6 +390,7 @@ export function useMonitor(settings: AppSettings): UseMonitor {
     lastVideoTimeRef.current = -1
     stuckFramesRef.current = 0
     stuckWarnedRef.current = false
+    monitorActiveRef.current = true
     setStalled(false)
     try {
       await screen.start()
@@ -420,6 +431,7 @@ export function useMonitor(settings: AppSettings): UseMonitor {
 
   const stop = useCallback(() => {
     screenSelfStopRef.current = true
+    monitorActiveRef.current = false
     alarmPlayer.stop()
     setAlarm(false)
     busyRef.current = false
